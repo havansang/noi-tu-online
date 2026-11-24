@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Nối Từ Online",
+  "description": "Bật hoặc tắt tự động nối từ trên tab Noitu.fun của bạn.",
+  "version": "2.5.0",
+  "minimum_chrome_version": "102",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_title": "Nối Từ Online — bật hoặc tắt",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png" }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}

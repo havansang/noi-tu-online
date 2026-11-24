@@ -1,0 +1,85 @@
+#noitu-online-status {
+  position: fixed;
+  z-index: 12000;
+  bottom: 16px;
+  left: 16px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border: 1px solid #5f7791;
+  border-radius: 10px;
+  background: #172b40;
+  color: #f8faff;
+  box-shadow: 0 4px 16px #10203159;
+  font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+}
+
+#noitu-online-status .noitu-online-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#noitu-online-status button {
+  flex: none;
+  padding: 5px 9px;
+  border: 1px solid #9bacbe;
+  border-radius: 6px;
+  background: #f8faff;
+  color: #172b40;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#noitu-online-status :is(button, summary, ul[tabindex]):focus-visible {
+  outline: 2px solid #ffc875;
+  outline-offset: 2px;
+}
+
+#noitu-online-status .noitu-online-continuations {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid #5f7791;
+  color: #dbe7f3;
+}
+
+#noitu-online-status .noitu-online-continuations p {
+  margin: 0;
+}
+
+#noitu-online-status .noitu-online-continuation-title {
+  color: #ffc875;
+  font-weight: 650;
+}
+
+#noitu-online-status .noitu-online-continuations ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+#noitu-online-status .noitu-online-continuations li {
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: #2b435b;
+  overflow-wrap: anywhere;
+}
+
+#noitu-online-status .noitu-online-continuations summary {
+  width: fit-content;
+  margin-top: 6px;
+  color: #ffc875;
+  cursor: pointer;
+}
+
+#noitu-online-status .noitu-online-continuations details ul {
+  max-height: min(10rem, 25vh);
+  overflow-y: auto;
+}
