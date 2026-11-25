@@ -15,6 +15,7 @@
     dialog: '.modal.is-active, [role="dialog"][aria-modal="true"]:not(.swal2-toast)',
     notice: '.swal2-popup',
     verification: '[data-testid="guest-verify"][aria-hidden="false"], iframe[src*="challenges.cloudflare.com"]',
+    rankVerification: '.notification.is-warning',
   };
 
   const normalize = (text) => text.normalize('NFC').trim().toLocaleLowerCase('vi').replace(/\s+/gu, ' ');
@@ -26,7 +27,10 @@
   const replyDelayMs = 2000;
   const queueRetryMs = 5000;
   const previewSize = 6;
-  const wordError = /không tồn tại từ|từ (?:này )?không (?:tồn tại|hợp lệ|có trong từ điển)|từ (?:này )?đã (?:được sử dụng|sử dụng|dùng)|(?:invalid word|word not found|word already (?:used|exists|played))/u;
+  const dictionaryRejection = /không tồn tại từ|từ (?:này )?không (?:tồn tại|hợp lệ|có nghĩa|có trong từ điển)|invalid word|unknown word|word (?:not found|(?:is )?not valid|is invalid|does not exist)/u;
+  const usedWordError = /(?:từ (?:này )?)?đã (?:được sử dụng|sử dụng|dùng|xuất hiện)|word (?:was |has been )?already (?:used|exists|played)/u;
+  const rejectionKeyPrefix = 'rejected-word:';
+  const rejectedWords = new Set();
 
   let session;
   let timer;
@@ -124,11 +128,37 @@
     return normalize(displayed?.textContent ?? '');
   }
 
+  function freshNotices(pending, notices) {
+    return [...notices].filter(([node, text]) => pending.notices.get(node) !== text)
+      .map(([, text]) => text);
+  }
+
+  function learnRejection(now, notices) {
+    const turn = session.match?.turn;
+    const pending = turn?.pending;
+    if (!pending || pending.fallback || rejectedWords.has(pending.answer) || now - pending.since > 5000) return;
+
+    const rejected = freshNotices(pending, notices).some((text) => {
+      const namedWord = text.match(/\[([^\]]+)\]/u)?.[1];
+      return dictionaryRejection.test(text) && !usedWordError.test(text) &&
+        (!namedWord || normalize(namedWord) === pending.answer);
+    });
+    if (!rejected) return;
+    const alreadyAccepted = [...document.querySelectorAll(selectors.chip)]
+      .some((chip) => normalize(chip.textContent) === pending.answer);
+    if (alreadyAccepted) return;
+
+    turn.lastRejected = pending.answer;
+    rejectedWords.add(pending.answer);
+    chrome.storage.local.set({ [`${rejectionKeyPrefix}${pending.answer}`]: true }).catch(console.warn);
+  }
+
   function chooseWord(prefix, used, attempted) {
+    const available = (word) => !used.has(word) && !rejectedWords.has(word);
     const availableCounts = new Map();
     function countAvailable(syllable) {
       if (!availableCounts.has(syllable)) {
-        const count = (session.all.get(syllable) ?? []).filter((word) => !used.has(word)).length;
+        const count = (session.all.get(syllable) ?? []).filter(available).length;
         availableCounts.set(syllable, count);
       }
       return availableCounts.get(syllable);
@@ -136,11 +166,11 @@
 
     let best;
     for (const word of session.all.get(prefix) ?? []) {
-      if (used.has(word) || attempted.has(word)) continue;
+      if (!available(word) || attempted.has(word)) continue;
 
       const opponentPrefix = ending(word);
       const replies = (session.all.get(opponentPrefix) ?? [])
-        .filter((reply) => reply !== word && !used.has(reply));
+        .filter((reply) => reply !== word && available(reply));
       if (best && !best.replies.length && replies.length) continue;
 
       let losingReplies = 0;
@@ -236,7 +266,8 @@
       }
       turn.pending = undefined;
 
-      if (!pending.fallback && !lostAttempt && !wordError.test(notices)) {
+      if (!pending.fallback && !lostAttempt && !freshNotices(pending, notices)
+        .some((text) => dictionaryRejection.test(text) || usedWordError.test(text))) {
         turn.waitMessage = 'Trang từ chối đáp án. Đang chờ lượt hoặc ván tiếp theo…';
         return updateStatus(turn.waitMessage);
       }
@@ -249,12 +280,18 @@
     }
 
     if (turn.prepared) {
-      const { answer, fallback, field } = turn.prepared;
+      const { answer, fallback, field, originalValue } = turn.prepared;
       turn.prepared = undefined;
       if (input !== field || normalize(input.value) !== answer) return;
+      if (!fallback && rejectedWords.has(answer)) {
+        turn.choice = undefined;
+        setInputValue.call(input, originalValue);
+        input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        return;
+      }
       if (!fallback) turn.attempted.add(answer);
       turn.sent++;
-      turn.pending = { since: now, remaining, fallback };
+      turn.pending = { answer, since: now, remaining, fallback, notices };
       const attempt = Math.max(turn.sent, maxAttempts - remaining + 1);
       updateStatus(fallback
         ? `Hết từ để nối. Đã nhập “a” (${attempt}/${maxAttempts}).`
@@ -272,10 +309,12 @@
       turn.choice = chooseWord(prefix, new Set([...history, word]), turn.attempted);
       showContinuations(turn.choice);
     }
-    if (now < turn.nextReplyAt) return updateStatus('Đang chờ trước khi nối từ…');
+    if (now < turn.nextReplyAt) return updateStatus(turn.lastRejected
+      ? `Đã đánh dấu “${turn.lastRejected}”. Đang chọn từ khác…`
+      : 'Đang chờ trước khi nối từ…');
 
     const answer = turn.choice?.word ?? `${prefix} a`;
-    turn.prepared = { answer, fallback: !turn.choice, field: input };
+    turn.prepared = { answer, fallback: !turn.choice, field: input, originalValue: input.value };
     setInputValue.call(input, answer);
     input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
   }
@@ -298,10 +337,11 @@
       showContinuations(null);
     }
 
-    const notices = normalize([...document.querySelectorAll(selectors.notice)]
-      .filter(visible).map((node) => node.textContent).join(' '));
+    const notices = new Map([...document.querySelectorAll(selectors.notice)]
+      .filter(visible).map((node) => [node, normalize(node.textContent)]));
+    const noticeText = [...notices.values()].join(' ');
     const siteBlock = /phát hiện.*(?:bot|tự động)|thao tác bất thường|đã chặn thao tác|tạm khóa hàng chờ|tài khoản (?:của bạn )?đã bị khóa/u;
-    if (siteBlock.test(notices)) {
+    if (siteBlock.test(noticeText)) {
       session.blocked = true;
       chrome.runtime.sendMessage({ type: 'noitu-online-blocked' }).catch(() => {});
       return updateStatus('Noitu.fun đã chặn thao tác. Tiện ích vẫn bật và đang chờ.');
@@ -309,12 +349,16 @@
     const verificationNotice = /xác minh|verify (?:you are|that you are)|captcha/u;
     const needsVerification = [...document.querySelectorAll(selectors.verification)]
       .some((element) => visible(element) && !element.closest('[aria-hidden="true"]'));
-    if (verificationNotice.test(notices) || needsVerification) {
+    const rankedChallenge = inLobby && [...document.querySelectorAll(selectors.rankVerification)]
+      .some((element) => visible(element) && normalize(element.querySelector('p')?.textContent ?? '')
+        .includes('hoàn thành xác minh để tiếp tục đấu xếp hạng'));
+    if (verificationNotice.test(noticeText) || needsVerification || rankedChallenge) {
       return updateStatus('Vẫn bật. Hãy xác minh CAPTCHA trên Noitu.fun để tiếp tục.');
     }
     if (document.querySelector('[data-testid="guest-verify"][data-phase="verifying"]')) {
       return updateStatus('Vẫn bật. Đang chờ Noitu.fun xác minh…');
     }
+    learnRejection(now, notices);
     if (visible(document.querySelector('[data-testid="ranked-versus"]'))) {
       return updateStatus('Đã tìm thấy đối thủ. Đang chờ bắt đầu…');
     }
@@ -349,11 +393,29 @@
     updateStatus('Đang đợi ván bắt đầu…');
   }
 
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    for (const [key, change] of Object.entries(changes)) {
+      if (!key.startsWith(rejectionKeyPrefix)) continue;
+      const word = key.slice(rejectionKeyPrefix.length);
+      if (change.newValue !== true || rejectedWords.has(word)) continue;
+      rejectedWords.add(word);
+      const turn = session?.match?.turn;
+      if (turn && !turn.pending) turn.choice = undefined;
+    }
+  });
+
   globalThis.noituOnline = {
     running: () => !!session,
     stop,
-    start: ({ groups: [all, preferred], blocked, restored }) => {
+    start: async ({ groups: [all, preferred], blocked, restored }) => {
       if (session) return;
+      const stored = await chrome.storage.local.get(null);
+      for (const [key, value] of Object.entries(stored)) {
+        if (value === true && key.startsWith(rejectionKeyPrefix)) {
+          rejectedWords.add(key.slice(rejectionKeyPrefix.length));
+        }
+      }
       session = {
         all: new Map(all), preferred: new Set(preferred), blocked,
         search: newSearch(restored ? Date.now() + 1200 : 0),

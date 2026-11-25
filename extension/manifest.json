@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Nối Từ Online",
   "description": "Bật hoặc tắt tự động nối từ trên tab Noitu.fun của bạn.",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "minimum_chrome_version": "102",
   "permissions": ["activeTab", "scripting", "storage"],
   "background": { "service_worker": "background.js", "type": "module" },
